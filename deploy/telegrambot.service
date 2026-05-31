@@ -1,0 +1,22 @@
+[Unit]
+Description=Telegram Bot (好玩 Bot + MiMo)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 默认假设把项目放在 /opt/telegrambot,如果不是请改这里
+WorkingDirectory=/opt/telegrambot
+EnvironmentFile=/opt/telegrambot/.env
+ExecStart=/opt/telegrambot/.venv/bin/python /opt/telegrambot/bot.py
+Restart=always
+RestartSec=5
+# 给 stdout/stderr 写到 journal,方便 journalctl 查日志
+StandardOutput=journal
+StandardError=journal
+# 简单加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

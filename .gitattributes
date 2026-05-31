@@ -1,0 +1,9 @@
+# 文本默认按系统转换
+* text=auto
+
+# Linux 专用文件强制 LF,防止 bash/systemd 报错
+*.sh        text eol=lf
+*.service   text eol=lf
+
+# Python 跨平台,统一 LF
+*.py        text eol=lf
