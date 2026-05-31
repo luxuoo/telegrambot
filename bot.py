@@ -5,6 +5,7 @@ import logging
 import os
 import random
 from datetime import datetime
+from pathlib import Path
 from typing import Dict
 
 import httpx
@@ -31,9 +32,12 @@ from data import (
     TAROT,
 )
 from mimo import MimoClient, from_env as build_mimo
+from tg_md import to_telegram_mdv2
 
 # ---------- 基础配置 ----------
-load_dotenv()
+# 强制按 bot.py 所在目录找 .env,避免宝塔/systemd 等启动器工作目录不对导致读不到
+_ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(_ENV_PATH)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Telegram 出网代理 (国内服务器需要),例:http://127.0.0.1:7890 或 socks5://user:pwd@host:port
 TG_PROXY = os.getenv("TG_PROXY", "").strip() or None
@@ -390,9 +394,27 @@ async def _ai_reply(update: Update, user_text: str) -> None:
         await update.message.reply_text("（沉默）")
         return
 
-    # Telegram 单条消息上限 4096,超长就拆
+    # Telegram 单条消息上限 4096,超长就拆;每段都用 MarkdownV2 渲染
     for chunk in _split_for_telegram(reply, 3500):
-        await update.message.reply_text(chunk)
+        await _send_md(update, chunk)
+
+
+async def _send_md(update: Update, text: str) -> None:
+    """用 MarkdownV2 发送;若解析失败,自动降级为纯文本,保证消息一定能发出去。"""
+    try:
+        md = to_telegram_mdv2(text)
+        await update.message.reply_text(
+            md,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        # 转换/解析失败:打日志 + 退回纯文本(原始内容)
+        logger.warning("MarkdownV2 send failed, fallback to plain: %s", e)
+        try:
+            await update.message.reply_text(text, disable_web_page_preview=True)
+        except Exception as e2:  # noqa: BLE001
+            logger.exception("plain text send also failed: %s", e2)
 
 
 def _split_for_telegram(text: str, size: int) -> list[str]:
@@ -565,6 +587,14 @@ def build_app() -> Application:
 
 def main() -> None:
     global mimo
+
+    # 启动时诊断:把 .env 读取情况打出来,方便排查
+    logger.info(".env 路径: %s (存在=%s)", _ENV_PATH, _ENV_PATH.exists())
+    logger.info("BOT_TOKEN: %s", _mask(BOT_TOKEN))
+    logger.info("MIMO_API_KEY: %s", _mask(os.getenv("MIMO_API_KEY")))
+    logger.info("MIMO_BASE_URL: %s", os.getenv("MIMO_BASE_URL") or "(未设置)")
+    logger.info("MIMO_MODEL: %s", os.getenv("MIMO_MODEL") or "(未设置)")
+
     mimo = build_mimo()
     if mimo:
         logger.info("MiMo enabled: model=%s base=%s", mimo.model, mimo.base_url)
@@ -574,6 +604,16 @@ def main() -> None:
     app = build_app()
     logger.info("Bot starting... 按 Ctrl+C 退出")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+def _mask(s: str | None) -> str:
+    """把敏感字符串打码:None/空 → '<空>',否则 'sk-Ab... (len=48)'"""
+    if not s:
+        return "<空>"
+    s = s.strip()
+    if len(s) <= 6:
+        return f"<太短: {len(s)} 位>"
+    return f"{s[:6]}... (len={len(s)})"
 
 
 if __name__ == "__main__":
